@@ -15,7 +15,7 @@
 #include "config.h"
 
 /* private variables */
-static char *mem_start_brk;  /* points to first byte of heap */
+static char *mem_start_brk;  /* points to first byte of heap */   // 이게 mem_heap
 static char *mem_brk;        /* points to last byte of heap */
 static char *mem_max_addr;   /* largest legal heap address */ 
 
@@ -55,6 +55,7 @@ void mem_reset_brk()
  *    by incr bytes and returns the start address of the new area. In
  *    this model, the heap cannot be shrunk.
  */
+// 추가적인 힙 메모리를 요청, 힙 축소 거부를 제외하면 시스템의 sbrk와 동일
 void *mem_sbrk(int incr) 
 {
     char *old_brk = mem_brk;
