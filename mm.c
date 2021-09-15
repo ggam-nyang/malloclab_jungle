@@ -23,10 +23,14 @@
 static void *extend_heap(size_t);
 static void *coalesce(void *);
 static void *find_fit(size_t);
+static void *next_fit(size_t);
 static void *place(void *, size_t);
 
+void remove_block(void *bp);
+void put_free_block(void *bp);
 
 static char *heap_listp;
+static char *free_listp = NULL;
 
 
 
@@ -78,6 +82,57 @@ team_t team = {
 #define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE(((char *)(bp) - WSIZE)))
 #define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE)))
 
+#define PRED_LOC(bp) (HDRP(bp) + WSIZE)
+#define SUCC_LOC(bp) (HDRP(bp) + DSIZE)
+
+#define PREC_FREEP(bp) GET(PRED_LOC(bp))
+#define SUCC_FREEP(bp) GET(SUCC_LOC(bp))
+
+///////////////////////////////// Block information /////////////////////////////////////////////////////////
+/*
+ 
+A   : Allocated? (1: true, 0:false)
+RA  : Reallocation tag (1: true, 0:false)
+ 
+ < Allocated Block >
+ 
+ 
+             31 30 29 28 27 26 25 24 23 22 21 20 19 18 17 16 15 14 13 12 11 10  9  8  7  6  5  4  3  2  1  0
+            +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+ Header :   |                              size of the block                                       |  |  | A|
+    bp ---> +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+            |                                                                                               |
+            |                                                                                               |
+            .                              Payload and padding                                              .
+            .                                                                                               .
+            .                                                                                               .
+            +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+ Footer :   |                              size of the block                                       |     | A|
+            +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+ 
+ 
+ < Free block >
+ 
+             31 30 29 28 27 26 25 24 23 22 21 20 19 18 17 16 15 14 13 12 11 10  9  8  7  6  5  4  3  2  1  0
+            +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+ Header :   |                              size of the block                                       |  |RA| A|
+    bp ---> +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+            |                        pointer to its predecessor in Segregated list                          |
+bp+WSIZE--> +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+            |                        pointer to its successor in Segregated list                            |
+            +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+            .                                                                                               .
+            .                                                                                               .
+            .                                                                                               .
+            +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+ Footer :   |                              size of the block                                       |     | A|
+            +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+ 
+ 
+*/
+///////////////////////////////// End of Block information /////////////////////////////////////////////////////////
+
+
 
 
 static void *extend_heap(size_t words)
@@ -108,13 +163,17 @@ static void *extend_heap(size_t words)
 int mm_init(void)
 {
     // empty heap을 만들자
-    if ((heap_listp = mem_sbrk(4 * WSIZE)) == (void *) - 1)
+    if ((heap_listp = mem_sbrk(6 * WSIZE)) == (void *) - 1)
         return -1;
     PUT(heap_listp, 0);
-    PUT(heap_listp + (1 * WSIZE), PACK(DSIZE, 1));
-    PUT(heap_listp + (2 * WSIZE), PACK(DSIZE, 1));
-    PUT(heap_listp + (3 * WSIZE), PACK(0, 1));
-    heap_listp += (2 * WSIZE);
+    PUT(heap_listp + (1 * WSIZE), PACK(DSIZE * 2, 1));
+    PUT(heap_listp + (2 * WSIZE), NULL);
+    PUT(heap_listp + (3 * WSIZE), NULL);
+    PUT(heap_listp + (4 * WSIZE), PACK(DSIZE * 2, 1));
+    PUT(heap_listp + (5 * WSIZE), PACK(0, 1));
+
+    // heap_listp += (2 * WSIZE);
+    free_listp = heap_listp + DSIZE;
 
     if (extend_heap(CHUNKSIZE / WSIZE) == NULL)
         return -1;
@@ -165,34 +224,92 @@ void *mm_malloc(size_t size)
 
 static void *find_fit(size_t asize)
 {
-    void *start_bp = mem_heap_lo() + 4 * WSIZE;
-    while (GET_SIZE(HDRP(start_bp)) > 0)
+    void *start_bp = free_listp;
+    while (!GET_ALLOC(HDRP(start_bp)))
     {
-        if (!GET_ALLOC(HDRP(start_bp)) && (asize <= GET_SIZE(HDRP(start_bp))))
+        if (GET_SIZE(HDRP(start_bp)) >= asize)
             return start_bp;
-        start_bp = NEXT_BLKP(start_bp);
+        start_bp = SUCC_FREEP(start_bp);
     }
     return NULL;
 }
 
+
+
+// long long next_fit_point = 4 * WSIZE;
+// static void *next_fit(size_t asize)
+// {
+//     void *start_bp = mem_heap_lo();
+//     printf("%p\n", next_fit_point);
+//     while (GET_SIZE(HDRP(start_bp + next_fit_point)) > 0)
+//     {
+//         if (!GET_ALLOC(HDRP(start_bp + next_fit_point)) && (asize <= GET_SIZE(HDRP(start_bp + next_fit_point))))
+//             // start_bp 어딘가에 저장  next_bp
+//             return start_bp + next_fit_point;
+        
+//         next_fit_point += GET_SIZE(HDRP(start_bp + next_fit_point));
+//         printf("%p\n", next_fit_point);
+//     }
+
+//     next_fit_point = 4 * WSIZE;
+//     while (GET_SIZE(HDRP(start_bp + next_fit_point)) > 0)
+//     {
+//         if (!GET_ALLOC(HDRP(start_bp + next_fit_point)) && (asize <= GET_SIZE(HDRP(start_bp + next_fit_point))))
+//             // start_bp 어딘가에 저장  next_bp
+//             return start_bp + next_fit_point;
+        
+//         next_fit_point += GET_SIZE(HDRP(start_bp + next_fit_point));
+//     }
+
+//     return NULL;
+// }
+
 static void *place(void *bp, size_t asize)
 {
     size_t size = GET_SIZE(HDRP(bp));
-    if ((size - asize) >= 4 * WSIZE)
+
+    remove_block(bp);
+    if ((size - asize) >= 6 * WSIZE)
     {
         PUT(HDRP(bp), PACK(asize, 1));
         PUT(FTRP(bp), PACK(asize, 1));
         bp = NEXT_BLKP(bp);
         PUT(HDRP(bp), PACK(size - asize, 0));
         PUT(FTRP(bp), PACK(size - asize, 0));
+
+        put_free_block(bp);
     }
+    
     else
     {
         PUT(HDRP(bp), PACK(size, 1));
         PUT(FTRP(bp), PACK(size, 1));
     }
-
 }
+
+void put_free_block(void *bp)
+{
+    SUCC_FREEP(bp) = free_listp;
+    PREC_FREEP(bp) = NULL;
+    PREC_FREEP(free_listp) = bp;
+    free_listp = bp;
+}
+
+
+
+void remove_block(void *bp)
+{
+    if (bp == free_listp) {
+        PREC_FREEP(SUCC_FREEP(bp)) = NULL;
+        free_listp = SUCC_FREEP(bp);
+    }
+    else {
+        SUCC_FREEP(PREC_FREEP(bp)) = SUCC_FREEP(bp);
+        PREC_FREEP(SUCC_FREEP(bp)) = PREC_FREEP(bp);
+    }
+}
+
+
 
 /*
  * mm_free - Freeing a block does nothing.
@@ -212,16 +329,19 @@ static void *coalesce(void *bp)
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
     size_t size = GET_SIZE(HDRP(bp));
 
-    if (prev_alloc && next_alloc)
-        return bp;
+    if (prev_alloc && next_alloc) {
 
+    }
+        
     else if (prev_alloc && !next_alloc) {
+        remove_block(NEXT_BLKP(bp));
         size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
         PUT(HDRP(bp), PACK(size, 0));
         PUT(FTRP(bp), PACK(size, 0));
     }
 
     else if (!prev_alloc && next_alloc) {
+        remove_block(PREV_BLKP(bp));
         size += GET_SIZE(HDRP(PREV_BLKP(bp)));
         PUT(FTRP(bp), PACK(size, 0));
         PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
@@ -229,11 +349,15 @@ static void *coalesce(void *bp)
     }
 
     else {
+        remove_block(PREV_BLKP(bp));
+        remove_block(NEXT_BLKP(bp));
         size += GET_SIZE(HDRP(PREV_BLKP(bp))) + GET_SIZE(FTRP(NEXT_BLKP(bp)));
         PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
         PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
         bp = PREV_BLKP(bp);
     }
+
+    put_free_block(bp);
     return bp;
 }
 
@@ -251,24 +375,10 @@ void *mm_realloc(void *ptr, size_t size)
     newptr = mm_malloc(size);
     if (newptr == NULL)
       return NULL;
-    copySize = *(size_t *)((char *)oldptr - SIZE_T_SIZE);
+    copySize = GET_SIZE(HDRP(oldptr));
     if (size < copySize)
       copySize = size;
     memcpy(newptr, oldptr, copySize);
     mm_free(oldptr);
     return newptr;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
