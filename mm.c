@@ -33,7 +33,8 @@ static char *heap_listp;
 static char *free_listp = NULL;
 
 
-
+// ------------------------------------------- Review 잘 부탁드립니다 --------------------------------------------------- //
+// Explicit 리스트, first-fit으로 구현하였고 분할 부분을 개선하여 86점으로 통과했습니다!
 
 /*********************************************************
  * NOTE TO STUDENTS: Before you do anything else, please
@@ -88,53 +89,9 @@ team_t team = {
 #define PREC_FREEP(bp) GET(PRED_LOC(bp))
 #define SUCC_FREEP(bp) GET(SUCC_LOC(bp))
 
-///////////////////////////////// Block information /////////////////////////////////////////////////////////
-/*
- 
-A   : Allocated? (1: true, 0:false)
-RA  : Reallocation tag (1: true, 0:false)
- 
- < Allocated Block >
- 
- 
-             31 30 29 28 27 26 25 24 23 22 21 20 19 18 17 16 15 14 13 12 11 10  9  8  7  6  5  4  3  2  1  0
-            +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
- Header :   |                              size of the block                                       |  |  | A|
-    bp ---> +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
-            |                                                                                               |
-            |                                                                                               |
-            .                              Payload and padding                                              .
-            .                                                                                               .
-            .                                                                                               .
-            +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
- Footer :   |                              size of the block                                       |     | A|
-            +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
- 
- 
- < Free block >
- 
-             31 30 29 28 27 26 25 24 23 22 21 20 19 18 17 16 15 14 13 12 11 10  9  8  7  6  5  4  3  2  1  0
-            +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
- Header :   |                              size of the block                                       |  |RA| A|
-    bp ---> +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
-            |                        pointer to its predecessor in Segregated list                          |
-bp+WSIZE--> +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
-            |                        pointer to its successor in Segregated list                            |
-            +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
-            .                                                                                               .
-            .                                                                                               .
-            .                                                                                               .
-            +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
- Footer :   |                              size of the block                                       |     | A|
-            +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
- 
- 
-*/
-///////////////////////////////// End of Block information /////////////////////////////////////////////////////////
 
 
-
-
+// 메모리가 부족할 때, heap을 늘려주는 함수
 static void *extend_heap(size_t words)
 {
     char * bp;
@@ -150,7 +107,7 @@ static void *extend_heap(size_t words)
     PUT(FTRP(bp), PACK(size, 0));
     PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1));
 
-    // 이전 block과 합쳐야 할지 알기 위해 coalesce 호출!!
+    // 물리적인 주변 block과 합쳐야 할지 알기 위해 coalesce 호출!!
     return coalesce(bp);
 }
 
@@ -162,7 +119,7 @@ static void *extend_heap(size_t words)
  */
 int mm_init(void)
 {
-    // empty heap을 만들자
+    // empty heap을 만들기
     if ((heap_listp = mem_sbrk(6 * WSIZE)) == (void *) - 1)
         return -1;
     PUT(heap_listp, 0);
@@ -172,7 +129,7 @@ int mm_init(void)
     PUT(heap_listp + (4 * WSIZE), PACK(DSIZE * 2, 1));
     PUT(heap_listp + (5 * WSIZE), PACK(0, 1));
 
-    // heap_listp += (2 * WSIZE);
+    // heap_listp += (2 * WSIZE);  explict 리스트의 head로 이용하기 위한 free_listp 정의
     free_listp = heap_listp + DSIZE;
 
     if (extend_heap(CHUNKSIZE / WSIZE) == NULL)
@@ -186,14 +143,6 @@ int mm_init(void)
  */
 void *mm_malloc(size_t size)
 {
-    // int newsize = ALIGN(size + SIZE_T_SIZE);
-    // void *p = mem_sbrk(newsize);
-    // if (p == (void *)-1)
-	// return NULL;
-    // else {
-    //     *(size_t *)p = size;
-    //     return (void *)((char *)p + SIZE_T_SIZE);
-    // }
     size_t asize;
     size_t extendsize;
     char *bp;
@@ -202,26 +151,28 @@ void *mm_malloc(size_t size)
     if (size == 0)
         return NULL;
     
-    // size를 조정해주기! header, footer를 위한 8바이트, 그리고 기본 2와드 이므로 8바이트
+    // size를 조정해주기! header, footer를 위한 8바이트, 그리고 더블 워드 정렬을 위해 ASIGN한다.
     if (size <= DSIZE)
         asize = 2 * DSIZE;
     else
-        asize = DSIZE * ((size + (DSIZE) + (DSIZE - 1)) / DSIZE);
+        asize = ALIGN(size+DSIZE);
     
-    // find_fit 해서 적절한 곳에 메모리 심기
+    // find_fit 해서 적절한 곳에 메모리 할당
     if ((bp = find_fit(asize)) != NULL) {
-        place(bp, asize);
+        bp = place(bp, asize);
         return bp;
     }
 
-    // fit이 없다면
+    // fit을 찾지 못했다면 heap 확장
     extendsize = MAX(asize, CHUNKSIZE);
     if ((bp = extend_heap(extendsize / WSIZE)) == NULL)
         return NULL;
-    place(bp, asize);
+    bp = place(bp, asize);
     return bp;
 }
 
+
+// first-fit을 이용했습니다.
 static void *find_fit(size_t asize)
 {
     void *start_bp = free_listp;
@@ -235,58 +186,48 @@ static void *find_fit(size_t asize)
 }
 
 
-
-// long long next_fit_point = 4 * WSIZE;
-// static void *next_fit(size_t asize)
-// {
-//     void *start_bp = mem_heap_lo();
-//     printf("%p\n", next_fit_point);
-//     while (GET_SIZE(HDRP(start_bp + next_fit_point)) > 0)
-//     {
-//         if (!GET_ALLOC(HDRP(start_bp + next_fit_point)) && (asize <= GET_SIZE(HDRP(start_bp + next_fit_point))))
-//             // start_bp 어딘가에 저장  next_bp
-//             return start_bp + next_fit_point;
-        
-//         next_fit_point += GET_SIZE(HDRP(start_bp + next_fit_point));
-//         printf("%p\n", next_fit_point);
-//     }
-
-//     next_fit_point = 4 * WSIZE;
-//     while (GET_SIZE(HDRP(start_bp + next_fit_point)) > 0)
-//     {
-//         if (!GET_ALLOC(HDRP(start_bp + next_fit_point)) && (asize <= GET_SIZE(HDRP(start_bp + next_fit_point))))
-//             // start_bp 어딘가에 저장  next_bp
-//             return start_bp + next_fit_point;
-        
-//         next_fit_point += GET_SIZE(HDRP(start_bp + next_fit_point));
-//     }
-
-//     return NULL;
-// }
-
+// 최소 요구 크기를 기준으로, 2가지 case로 나누어 분할을 진행합니다.
 static void *place(void *bp, size_t asize)
 {
-    size_t size = GET_SIZE(HDRP(bp));
+    size_t osize = GET_SIZE(HDRP(bp));
 
     remove_block(bp);
-    if ((size - asize) >= 6 * WSIZE)
+    // 할당 후 잔여 블록이 최소 블록 사이즈를 충족하지 못하는 경우, 분할하지 않고 전체 블록을 할당한다. 
+    // (할당 블록의 경우, PRED / SUCC이 필요하지 않으므로 최소 블록의 크기는 4 WSIZE이다.)
+    if ((osize - asize) <= 4 * WSIZE)
+    {
+        PUT(HDRP(bp), PACK(osize, 1));
+        PUT(FTRP(bp), PACK(osize, 1));
+    }
+    // 최소 블록 사이즈를 충족할 경우, 2가지로 나누었다.
+    // binary.rep의 효율을 상승시키기 위해 96byte 이상의 크기에 대해서는 할당 블록을 뒤에 배치하고, 비할당 블록을 앞에 위치했다.
+    // -> 이 효과로 96byte 이상의 블록이 free 된 후, 기존보다 더 큰 블록이 들어 올 때, 외부 단편화를 최소화할 수 있다.
+    else if (asize >= 96)
+    {
+        PUT(HDRP(bp), PACK(osize - asize, 0));
+        PUT(FTRP(bp), PACK(osize - asize, 0));
+        put_free_block(bp);
+        
+        bp = NEXT_BLKP(bp);
+        PUT(HDRP(bp), PACK(asize, 1));
+        PUT(FTRP(bp), PACK(asize, 1));
+
+    }
+    // 96 이상의 블록이 아닌 경우에는 기존처럼 할당 블록을 앞에, 비할당 블록을 뒤에 배치하였다.
+    else
     {
         PUT(HDRP(bp), PACK(asize, 1));
         PUT(FTRP(bp), PACK(asize, 1));
-        bp = NEXT_BLKP(bp);
-        PUT(HDRP(bp), PACK(size - asize, 0));
-        PUT(FTRP(bp), PACK(size - asize, 0));
+        
+        PUT(HDRP(NEXT_BLKP(bp)), PACK(osize - asize, 0));
+        PUT(FTRP(NEXT_BLKP(bp)), PACK(osize - asize, 0));
 
-        put_free_block(bp);
+        put_free_block(NEXT_BLKP(bp));
     }
-    
-    else
-    {
-        PUT(HDRP(bp), PACK(size, 1));
-        PUT(FTRP(bp), PACK(size, 1));
-    }
+    return bp;
 }
 
+// 새로운 free 블럭이 생겼을 때, LIFO 방식을 위해 첫 헤드에 넣어줍니다.
 void put_free_block(void *bp)
 {
     SUCC_FREEP(bp) = free_listp;
@@ -296,7 +237,7 @@ void put_free_block(void *bp)
 }
 
 
-
+// free 블럭에 메모리를 할당 했을 때, 삭제된 노드를 연결리스트에서 제거하고 연결을 이어줍니다.
 void remove_block(void *bp)
 {
     if (bp == free_listp) {
@@ -323,6 +264,7 @@ void mm_free(void *bp)
     coalesce(bp);
 }
 
+// 4가지 경우로 나누어 연결을 진행합니다.
 static void *coalesce(void *bp)
 {
     size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
